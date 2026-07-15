@@ -1,10 +1,30 @@
 #include "URL.h"
+#include <Babylon/Polyfills/Blob.h>
+#include <basen.hpp>
 #include <sstream>
 #include <regex>
 #include <optional>
+#include <iterator>
 
 // NOTE: This is a platform agnostic implementation created with a lot of help from AI :)
 //       In the future, we may want to consider using platform-specific URL parsing APIs instead.
+
+namespace
+{
+    // base-n's encode_b64 emits unpadded base64; data: URLs use the padded
+    // RFC 4648 alphabet, so append the '=' run for the final partial group.
+    void EncodeBase64(const std::byte* data, size_t size, std::string& out)
+    {
+        const auto* begin = reinterpret_cast<const char*>(data);
+        bn::encode_b64(begin, begin + size, std::back_inserter(out));
+
+        const size_t remainder = size % 3;
+        if (remainder != 0)
+        {
+            out.append(3 - remainder, '=');
+        }
+    }
+}
 
 namespace
 {
@@ -346,6 +366,8 @@ namespace Babylon::Polyfills::Internal
                     // Static methods
                     StaticMethod("canParse", &URL::CanParse),
                     StaticMethod("parse", &URL::Parse),
+                    StaticMethod("createObjectURL", &URL::CreateObjectURL),
+                    StaticMethod("revokeObjectURL", &URL::RevokeObjectURL),
                 });
 
             env.Global().Set(JS_URL_CONSTRUCTOR_NAME, func);
@@ -711,6 +733,48 @@ namespace Babylon::Polyfills::Internal
         {
             return info.Env().Null();
         }
+    }
+
+    // URL.createObjectURL(blob) returns a URL representing the given object. Native has no
+    // blob: URL store, so we return an equivalent data: URL that Babylon's loaders decode
+    // entirely JS-side (Misc/fileTools RequestFile -> DecodeBase64UrlToBinary). revokeObjectURL
+    // is therefore a no-op. Only Blob objects are supported (not MediaSource/MediaStream).
+    Napi::Value URL::CreateObjectURL(const Napi::CallbackInfo& info)
+    {
+        auto env = info.Env();
+
+        if (!info.Length() || !info[0].IsObject())
+        {
+            throw Napi::TypeError::New(env, "URL.createObjectURL: expected a Blob argument");
+        }
+
+        const std::byte* data{};
+        size_t size{};
+        std::string type;
+        if (!Polyfills::Blob::TryGetData(info[0].As<Napi::Object>(), data, size, type))
+        {
+            throw Napi::TypeError::New(env, "URL.createObjectURL: argument is not a Blob");
+        }
+
+        if (type.empty())
+        {
+            type = "application/octet-stream";
+        }
+
+        std::string b64;
+        EncodeBase64(data, size, b64);
+
+        std::string url;
+        url.reserve(type.size() + b64.size() + 13);
+        url.append("data:").append(type).append(";base64,").append(b64);
+
+        return Napi::String::New(env, url);
+    }
+
+    // No-op: createObjectURL returns self-contained data: URLs, so there is nothing to release.
+    Napi::Value URL::RevokeObjectURL(const Napi::CallbackInfo& info)
+    {
+        return info.Env().Undefined();
     }
 }
 
