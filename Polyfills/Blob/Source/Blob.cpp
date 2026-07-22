@@ -143,13 +143,15 @@ namespace Babylon::Polyfills::Blob
     bool BABYLON_API TryGetData(const Napi::Object& object, const std::byte*& outData, size_t& outSize, std::string& outType)
     {
         const auto env = object.Env();
+        const auto global = env.Global();
 
         // Verify `object` is a Blob (or a subclass such as File) by walking its prototype chain and
-        // comparing each link against Blob.prototype. napi_instanceof (Napi::Object::InstanceOf) is
-        // unreliable for ObjectWrap-based constructors on several engine adapters (JavaScriptCore,
-        // V8, JSI) -- it can report false for genuine instances -- whereas napi_get_prototype maps
-        // directly to the engine's own prototype lookup and is consistent across all of them.
-        const auto blobConstructor = env.Global().Get("Blob");
+        // comparing each link against Blob.prototype. We deliberately avoid napi_instanceof
+        // (Napi::Object::InstanceOf), which is unreliable for ObjectWrap-based constructors on
+        // several engine adapters (it can report false for genuine instances), and we use the
+        // JS-level Object.getPrototypeOf (rather than the raw napi_get_prototype C API, which is
+        // not exposed by every adapter, e.g. JSI) so this stays portable across all engines.
+        const auto blobConstructor = global.Get("Blob");
         if (!blobConstructor.IsFunction())
         {
             return false;
@@ -161,27 +163,30 @@ namespace Babylon::Polyfills::Blob
             return false;
         }
 
-        bool isBlob = false;
-        napi_value current{};
-        if (napi_get_prototype(env, object, &current) == napi_ok)
+        const auto objectConstructor = global.Get("Object");
+        if (!objectConstructor.IsObject())
         {
-            while (current != nullptr)
+            return false;
+        }
+
+        const auto getPrototypeOf = objectConstructor.As<Napi::Object>().Get("getPrototypeOf");
+        if (!getPrototypeOf.IsFunction())
+        {
+            return false;
+        }
+
+        const auto getPrototypeOfFn = getPrototypeOf.As<Napi::Function>();
+
+        bool isBlob = false;
+        Napi::Value current = getPrototypeOfFn.Call({object});
+        while (current.IsObject())
+        {
+            if (current.StrictEquals(blobPrototype))
             {
-                const Napi::Value proto{env, current};
-                if (proto.IsNull() || proto.IsUndefined())
-                {
-                    break;
-                }
-                if (proto.StrictEquals(blobPrototype))
-                {
-                    isBlob = true;
-                    break;
-                }
-                if (napi_get_prototype(env, current, &current) != napi_ok)
-                {
-                    break;
-                }
+                isBlob = true;
+                break;
             }
+            current = getPrototypeOfFn.Call({current});
         }
 
         if (!isBlob)
