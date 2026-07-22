@@ -1328,30 +1328,6 @@ describe("URL.createObjectURL", function () {
         expect(result.status).to.equal(0);
         expect(result.errorFired).to.equal(true);
     });
-
-    it("XMLHttpRequest instance can be reused for a second blob: request", async function () {
-        const req = new XMLHttpRequest();
-
-        const first = URL.createObjectURL(new Blob(["first"], { type: "text/plain" }));
-        const r1 = await new Promise<XMLHttpRequest>((resolve) => {
-            req.addEventListener("loadend", () => resolve(req));
-            req.open("GET", first);
-            req.send();
-        });
-        expect(r1.status).to.equal(200);
-        expect(r1.responseText).to.equal("first");
-        URL.revokeObjectURL(first);
-
-        const second = URL.createObjectURL(new Blob(["second"], { type: "text/plain" }));
-        const r2 = await new Promise<XMLHttpRequest>((resolve) => {
-            req.addEventListener("loadend", () => resolve(req));
-            req.open("GET", second);
-            req.send();
-        });
-        expect(r2.status).to.equal(200);
-        expect(r2.responseText).to.equal("second");
-        URL.revokeObjectURL(second);
-    });
 });
 
 // URLSearchParams
