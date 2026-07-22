@@ -48,8 +48,8 @@ FetchContent_Declare(llhttp
     URL "https://github.com/nodejs/llhttp/archive/refs/tags/release/v8.1.0.tar.gz"
     EXCLUDE_FROM_ALL)
 FetchContent_Declare(UrlLib
-    GIT_REPOSITORY https://github.com/bkaradzic-microsoft/UrlLib.git
-    GIT_TAG shotgun
+    GIT_REPOSITORY https://github.com/BabylonJS/UrlLib.git
+    GIT_TAG 425c9f10807f3dcea062c621b549aa0771325a7b
     EXCLUDE_FROM_ALL)
 FetchContent_Declare(quickjs-ng
     GIT_REPOSITORY https://github.com/quickjs-ng/quickjs.git
