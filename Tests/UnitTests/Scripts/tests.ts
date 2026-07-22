@@ -1246,6 +1246,11 @@ describe("URL.createObjectURL", function () {
         URL.revokeObjectURL(url);
     });
 
+    it("throws when createObjectURL is given a non-Blob", function () {
+        expect(() => URL.createObjectURL({} as any)).to.throw();
+        expect(() => URL.createObjectURL("not a blob" as any)).to.throw();
+    });
+
     it("resolves a blob: URL through fetch (text + content-type)", async function () {
         const url = URL.createObjectURL(new Blob(["hello blob"], { type: "text/plain" }));
         const response = await fetch(url);
@@ -1305,6 +1310,47 @@ describe("URL.createObjectURL", function () {
         });
         expect(result.status).to.equal(0);
         expect(result.errorFired).to.equal(true);
+    });
+
+    it("XMLHttpRequest honors a revoke between open() and send()", async function () {
+        const url = URL.createObjectURL(new Blob(["late revoke"]));
+        const result = await new Promise<{ status: number; errorFired: boolean }>((resolve) => {
+            const req = new XMLHttpRequest();
+            let errorFired = false;
+            req.addEventListener("error", () => { errorFired = true; });
+            req.addEventListener("loadend", () => resolve({ status: req.status, errorFired }));
+            req.open("GET", url);
+            // Revoked after open() but before send(): the store is re-checked at send() time, so
+            // this must surface as a network error rather than serving stale bytes.
+            URL.revokeObjectURL(url);
+            req.send();
+        });
+        expect(result.status).to.equal(0);
+        expect(result.errorFired).to.equal(true);
+    });
+
+    it("XMLHttpRequest instance can be reused for a second blob: request", async function () {
+        const req = new XMLHttpRequest();
+
+        const first = URL.createObjectURL(new Blob(["first"], { type: "text/plain" }));
+        const r1 = await new Promise<XMLHttpRequest>((resolve) => {
+            req.addEventListener("loadend", () => resolve(req));
+            req.open("GET", first);
+            req.send();
+        });
+        expect(r1.status).to.equal(200);
+        expect(r1.responseText).to.equal("first");
+        URL.revokeObjectURL(first);
+
+        const second = URL.createObjectURL(new Blob(["second"], { type: "text/plain" }));
+        const r2 = await new Promise<XMLHttpRequest>((resolve) => {
+            req.addEventListener("loadend", () => resolve(req));
+            req.open("GET", second);
+            req.send();
+        });
+        expect(r2.status).to.equal(200);
+        expect(r2.responseText).to.equal("second");
+        URL.revokeObjectURL(second);
     });
 });
 

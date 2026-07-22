@@ -142,8 +142,49 @@ namespace Babylon::Polyfills::Blob
 
     bool BABYLON_API TryGetData(const Napi::Object& object, const std::byte*& outData, size_t& outSize, std::string& outType)
     {
-        const auto blobConstructor = object.Env().Global().Get("Blob");
-        if (!blobConstructor.IsFunction() || !object.InstanceOf(blobConstructor.As<Napi::Function>()))
+        const auto env = object.Env();
+
+        // Verify `object` is a Blob (or a subclass such as File) by walking its prototype chain and
+        // comparing each link against Blob.prototype. napi_instanceof (Napi::Object::InstanceOf) is
+        // unreliable for ObjectWrap-based constructors on several engine adapters (JavaScriptCore,
+        // V8, JSI) -- it can report false for genuine instances -- whereas napi_get_prototype maps
+        // directly to the engine's own prototype lookup and is consistent across all of them.
+        const auto blobConstructor = env.Global().Get("Blob");
+        if (!blobConstructor.IsFunction())
+        {
+            return false;
+        }
+
+        const auto blobPrototype = blobConstructor.As<Napi::Function>().Get("prototype");
+        if (!blobPrototype.IsObject())
+        {
+            return false;
+        }
+
+        bool isBlob = false;
+        napi_value current{};
+        if (napi_get_prototype(env, object, &current) == napi_ok)
+        {
+            while (current != nullptr)
+            {
+                const Napi::Value proto{env, current};
+                if (proto.IsNull() || proto.IsUndefined())
+                {
+                    break;
+                }
+                if (proto.StrictEquals(blobPrototype))
+                {
+                    isBlob = true;
+                    break;
+                }
+                if (napi_get_prototype(env, current, &current) != napi_ok)
+                {
+                    break;
+                }
+            }
+        }
+
+        if (!isBlob)
         {
             return false;
         }
