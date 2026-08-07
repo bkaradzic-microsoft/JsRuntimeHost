@@ -1,6 +1,7 @@
 #include "Blob.h"
 #include <Babylon/JsRuntime.h>
 #include <Babylon/Polyfills/Blob.h>
+#include <Babylon/Polyfills/BlobInternal.h>
 
 namespace Babylon::Polyfills::Internal
 {
@@ -56,7 +57,7 @@ namespace Babylon::Polyfills::Internal
 
     Napi::Value Blob::GetSize(const Napi::CallbackInfo&)
     {
-        return Napi::Value::From(Env(), m_data.size());
+        return Napi::Value::From(Env(), m_data->size());
     }
 
     Napi::Value Blob::GetType(const Napi::CallbackInfo&)
@@ -67,8 +68,8 @@ namespace Babylon::Polyfills::Internal
     Napi::Value Blob::Text(const Napi::CallbackInfo&)
     {
         // NOTE: This will not check for UTF-8 validity
-        const auto begin = reinterpret_cast<const char*>(m_data.data());
-        std::string text(begin, m_data.size());
+        const auto begin = reinterpret_cast<const char*>(m_data->data());
+        std::string text(begin, m_data->size());
 
         const auto deferred = Napi::Promise::Deferred::New(Env());
         deferred.Resolve(Napi::String::New(Env(), text));
@@ -77,10 +78,10 @@ namespace Babylon::Polyfills::Internal
 
     Napi::Value Blob::ArrayBuffer(const Napi::CallbackInfo&)
     {
-        const auto arrayBuffer = Napi::ArrayBuffer::New(Env(), m_data.size());
-        if (m_data.data())
+        const auto arrayBuffer = Napi::ArrayBuffer::New(Env(), m_data->size());
+        if (m_data->data())
         {
-            std::memcpy(arrayBuffer.Data(), m_data.data(), m_data.size());
+            std::memcpy(arrayBuffer.Data(), m_data->data(), m_data->size());
         }
 
         const auto deferred = Napi::Promise::Deferred::New(Env());
@@ -90,12 +91,12 @@ namespace Babylon::Polyfills::Internal
 
     Napi::Value Blob::Bytes(const Napi::CallbackInfo&)
     {
-        const auto arrayBuffer = Napi::ArrayBuffer::New(Env(), m_data.size());
-        if (m_data.data())
+        const auto arrayBuffer = Napi::ArrayBuffer::New(Env(), m_data->size());
+        if (m_data->data())
         {
-            std::memcpy(arrayBuffer.Data(), m_data.data(), m_data.size());
+            std::memcpy(arrayBuffer.Data(), m_data->data(), m_data->size());
         }
-        const auto uint8Array = Napi::Uint8Array::New(Env(), m_data.size(), arrayBuffer, 0);
+        const auto uint8Array = Napi::Uint8Array::New(Env(), m_data->size(), arrayBuffer, 0);
 
         const auto deferred = Napi::Promise::Deferred::New(Env());
         deferred.Resolve(uint8Array);
@@ -108,27 +109,28 @@ namespace Babylon::Polyfills::Internal
         {
             const auto buffer = blobPart.As<Napi::ArrayBuffer>();
             const auto begin = static_cast<const std::byte*>(buffer.Data());
-            m_data.assign(begin, begin + buffer.ByteLength());
+            m_data = std::make_shared<const std::vector<std::byte>>(begin, begin + buffer.ByteLength());
         }
         else if (blobPart.IsTypedArray() || blobPart.IsDataView())
         {
             const auto array = blobPart.As<Napi::TypedArray>();
             const auto buffer = array.ArrayBuffer();
             const auto begin = static_cast<const std::byte*>(buffer.Data()) + array.ByteOffset();
-            m_data.assign(begin, begin + array.ByteLength());
+            m_data = std::make_shared<const std::vector<std::byte>>(begin, begin + array.ByteLength());
         }
         else if (blobPart.IsString())
         {
             const auto str = blobPart.As<Napi::String>().Utf8Value();
             const auto begin = reinterpret_cast<const std::byte*>(str.data());
-            m_data.assign(begin, begin + str.length());
+            m_data = std::make_shared<const std::vector<std::byte>>(begin, begin + str.length());
         }
         else
         {
-            // Assume it's another Blob object
+            // Assume it's another Blob object. Blobs are immutable, so the buffer can be shared
+            // rather than copied.
             const auto obj = blobPart.As<Napi::Object>();
             const auto blobObj = Napi::ObjectWrap<Blob>::Unwrap(obj);
-            m_data.assign(blobObj->m_data.begin(), blobObj->m_data.end());
+            m_data = blobObj->m_data;
         }
     }
 }
@@ -140,7 +142,7 @@ namespace Babylon::Polyfills::Blob
         Internal::Blob::Initialize(env);
     }
 
-    bool BABYLON_API TryGetData(const Napi::Object& object, const std::byte*& outData, size_t& outSize, std::string& outType)
+    std::optional<BlobData> BABYLON_API TryGetData(const Napi::Object& object)
     {
         const auto env = object.Env();
         const auto global = env.Global();
@@ -148,40 +150,34 @@ namespace Babylon::Polyfills::Blob
         // Verify `object` is a Blob (or a subclass such as File) by walking its prototype chain and
         // comparing each link against Blob.prototype, using the JS-level Object.getPrototypeOf.
         //
-        // Two engine-adapter quirks drive this implementation:
-        //  * The Blob constructor is created via node-addon-api's DefineClass. On the JavaScriptCore
-        //    adapter such constructors are callable-as-constructor but are NOT reported as functions
-        //    by napi_typeof (JSObjectIsFunction returns false), so we must probe the constructor with
-        //    IsObject() rather than IsFunction() and read `prototype` as a plain object property.
-        //  * We use Object.getPrototypeOf rather than the raw napi_get_prototype C API because the
-        //    latter is not exposed by every adapter (e.g. JSI) and, on JSC, returns the raw
-        //    [[Prototype]] which differs from the JS-visible prototype of a DefineClass instance.
-        // Together this keeps the check portable across QuickJS, V8, JavaScriptCore, Chakra and JSI,
-        // and it also accepts Blob subclasses (e.g. File). We deliberately avoid napi_instanceof,
-        // whose node-addon-api wrapper requires a Napi::Function and is likewise gated on the
-        // constructor being typed as a function.
+        // We use Object.getPrototypeOf rather than the raw napi_get_prototype C API because the
+        // latter is not exposed by every adapter (e.g. JSI) and, on JSC, returns the raw
+        // [[Prototype]] which differs from the JS-visible prototype of a DefineClass instance.
+        // This keeps the check portable across QuickJS, V8, JavaScriptCore, Chakra and JSI, and it
+        // also accepts Blob subclasses (e.g. File). We deliberately avoid napi_instanceof, whose
+        // node-addon-api wrapper requires a Napi::Function.
         const auto blobConstructor = global.Get("Blob");
-        if (!blobConstructor.IsObject())
+        if (!blobConstructor.IsFunction())
         {
-            return false;
+            return std::nullopt;
         }
 
         const auto blobPrototype = blobConstructor.As<Napi::Object>().Get("prototype");
         if (!blobPrototype.IsObject())
         {
-            return false;
+            return std::nullopt;
         }
 
         const auto objectConstructor = global.Get("Object");
         if (!objectConstructor.IsObject())
         {
-            return false;
+            return std::nullopt;
         }
 
         const auto getPrototypeOf = objectConstructor.As<Napi::Object>().Get("getPrototypeOf");
         if (!getPrototypeOf.IsFunction())
         {
-            return false;
+            return std::nullopt;
         }
 
         const auto getPrototypeOfFn = getPrototypeOf.As<Napi::Function>();
@@ -200,14 +196,10 @@ namespace Babylon::Polyfills::Blob
 
         if (!isBlob)
         {
-            return false;
+            return std::nullopt;
         }
 
         const auto* blob = Internal::Blob::Unwrap(object);
-        const auto& data = blob->Data();
-        outData = data.data();
-        outSize = data.size();
-        outType = blob->Type();
-        return true;
+        return BlobData{blob->Data(), blob->Type()};
     }
 }
