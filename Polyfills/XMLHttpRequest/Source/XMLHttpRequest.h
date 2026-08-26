@@ -6,6 +6,7 @@
 #include <UrlLib/UrlLib.h>
 
 #include <unordered_map>
+#include <optional>
 #include <vector>
 
 namespace Babylon::Polyfills::Internal
@@ -49,6 +50,10 @@ namespace Babylon::Polyfills::Internal
         void RaiseEvent(const char* eventType);
 
         std::string m_url{};
+        // Set when UrlRequest::Open rejected the URL. A browser resolves a relative or
+        // otherwise unfetchable URL against the document base and only reports the failure
+        // asynchronously, so open() must not throw here; send() reports it instead.
+        std::optional<std::string> m_openError{};
         UrlLib::UrlRequest m_request{};
         JsRuntimeScheduler m_runtimeScheduler;
         ReadyState m_readyState{ReadyState::Unsent};

@@ -180,6 +180,11 @@ namespace Babylon::Polyfills::Internal
     {
         // Stable symbolic token for a transport failure (e.g. "CURLE_COULDNT_CONNECT",
         // "NSURLErrorTimedOut", "AppResourceNotFound"); empty when there was no transport failure.
+        if (m_openError.has_value())
+        {
+            return Napi::String::New(Env(), "UrlOpenFailed");
+        }
+
         return Napi::String::New(Env(), std::string{m_request.ErrorSymbol()});
     }
 
@@ -187,6 +192,11 @@ namespace Babylon::Polyfills::Internal
     {
         // Full normalized "<domain>:<symbol>(<code>): <detail>" string; empty when there was no
         // transport failure.
+        if (m_openError.has_value())
+        {
+            return Napi::String::New(Env(), *m_openError);
+        }
+
         return Napi::String::New(Env(), std::string{m_request.ErrorString()});
     }
 
@@ -261,6 +271,7 @@ namespace Babylon::Polyfills::Internal
     void XMLHttpRequest::Open(const Napi::CallbackInfo& info)
     {
         m_url = info[1].As<Napi::String>();
+        m_openError.reset();
 
         try
         {
@@ -268,13 +279,21 @@ namespace Babylon::Polyfills::Internal
         }
         catch (const std::exception& e)
         {
-            throw Napi::Error::New(info.Env(), std::string{"Error opening URL: "} + e.what());
+            m_openError = std::string{"Error opening URL: "} + e.what();
         }
         catch (...)
         {
-            throw Napi::Error::New(info.Env(), "Unknown error opening URL");
+            m_openError = "Unknown error opening URL";
         }
 
+        // Deliberately not rethrown. On the web a URL that cannot be fetched - including any
+        // relative URL, which resolves against the document base and then 404s - fails through
+        // the asynchronous error event, never as a throw out of open(). Libraries written for
+        // the browser rely on that: Babylon's .babylon scene loader, for example, parses a
+        // texture with a bare name (ClusteredLightContainer's LightDataTexture) and expects the
+        // failed load to be reported to an error callback. Throwing here aborted the whole
+        // scene parse, silently dropping every mesh and camera that followed. Report the
+        // failure from send() instead.
         SetReadyState(ReadyState::Opened);
     }
 
@@ -283,6 +302,21 @@ namespace Babylon::Polyfills::Internal
         if (m_readyState != ReadyState::Opened)
         {
             throw Napi::Error::New(info.Env(), "XMLHttpRequest must be opened before it can be sent");
+        }
+
+        if (m_openError.has_value())
+        {
+            // The URL never opened, so there is nothing to send. Report the failure the way a
+            // network error is reported, and asynchronously so that callers can still attach
+            // handlers after send() returns.
+            auto anchor = std::make_shared<Napi::ObjectReference>(Napi::Persistent(info.This().As<Napi::Object>()));
+            arcana::make_task(m_runtimeScheduler, arcana::cancellation::none(), [this, anchor{std::move(anchor)}]() {
+                SetReadyState(ReadyState::Done);
+                RaiseEvent(EventType::Error);
+                RaiseEvent(EventType::LoadEnd);
+                m_eventHandlerRefs.clear();
+            });
+            return;
         }
 
         if (info.Length() > 0)
