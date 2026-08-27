@@ -132,8 +132,9 @@ namespace
             }
 
             return Napi::String::New(env, units);
-        }
-        Napi::Value Decode(const Napi::CallbackInfo& info)
+                    }
+
+                    Napi::Value Decode(const Napi::CallbackInfo& info)
         {
             if (info.Length() < 1 || info[0].IsUndefined())
             {
