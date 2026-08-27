@@ -132,6 +132,21 @@ describe("XMLHTTPRequest", function () {
         expect(xhr.status).to.equal(200);
     });
 
+    it("should fire 'load' before 'loadend' for a successful request", async function () {
+        const events = await new Promise<string[]>((resolve) => {
+            const xhr = new XMLHttpRequest();
+            const observed: string[] = [];
+            xhr.addEventListener("load", () => observed.push("load"));
+            xhr.addEventListener("loadend", () => {
+                observed.push("loadend");
+                resolve(observed);
+            });
+            xhr.open("GET", "app:///Scripts/symlink_target.js");
+            xhr.send();
+        });
+        expect(events).to.deep.equal(["load", "loadend"]);
+    });
+
     it("should load URLs with escaped unicode characters", async function () {
         const xhr = await createRequest("GET", "https://raw.githubusercontent.com/BabylonJS/Assets/master/meshes/%CF%83%CF%84%CF%81%CE%BF%CE%B3%CE%B3%CF%85%CE%BB%CE%B5%CE%BC%CE%AD%CE%BD%CE%BF%CF%82%20%25%20%CE%BA%CF%8D%CE%B2%CE%BF%CF%82.glb");
         expect(xhr.status).to.equal(200);

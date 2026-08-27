@@ -57,6 +57,7 @@ namespace Babylon::Polyfills::Internal
         namespace EventType
         {
             constexpr const char* ReadyStateChange = "readystatechange";
+            constexpr const char* Load = "load";
             constexpr const char* LoadEnd = "loadend";
             constexpr const char* Error = "error";
         }
@@ -362,6 +363,10 @@ namespace Babylon::Polyfills::Internal
                 if (failed)
                 {
                     RaiseEvent(EventType::Error);
+                }
+                else
+                {
+                    RaiseEvent(EventType::Load);
                 }
                 RaiseEvent(EventType::LoadEnd);
 
