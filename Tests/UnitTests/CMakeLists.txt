@@ -79,11 +79,7 @@ endif()
 target_compile_definitions(UnitTests PRIVATE JSRUNTIMEHOST_PLATFORM="${JSRUNTIMEHOST_PLATFORM}")
 target_compile_definitions(UnitTests PRIVATE NAPI_JAVASCRIPT_ENGINE="${NAPI_JAVASCRIPT_ENGINE}")
 
-# The V8JSI Node-API shim does not implement napi_create_dataview, so the
-# CreateDataViewRejectsOverflowingRange test is compiled out on that backend.
-if(NAPI_JAVASCRIPT_ENGINE STREQUAL "JSI")
-    target_compile_definitions(UnitTests PRIVATE JSRUNTIMEHOST_NAPI_ENGINE_JSI)
-endif()
+target_compile_definitions(UnitTests PRIVATE JSRUNTIMEHOST_NAPI_ENGINE_${NAPI_JAVASCRIPT_ENGINE})
 
 target_link_libraries(UnitTests
     PRIVATE AppRuntime

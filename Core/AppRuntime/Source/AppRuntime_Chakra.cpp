@@ -50,6 +50,11 @@ namespace Babylon
                 });
             },
             &dispatchFunction));
+
+        // Unhandled promise rejection tracking (OnUnhandledPromiseRejection) is a no-op on this
+        // backend: the OS EdgeMode Chakra runtime (chakrart.h) exposes no host promise-rejection
+        // hook (JsSetHostPromiseRejectionTracker is ChakraCore-only). See AppRuntime.h.
+
         ThrowIfFailed(JsProjectWinRTNamespace(L"Windows"));
 
         if (m_options.EnableDebugger)
@@ -68,7 +73,7 @@ namespace Babylon
         ThrowIfFailed(JsSetCurrentContext(JS_INVALID_REFERENCE));
         ThrowIfFailed(JsDisposeRuntime(jsRuntime));
 
-        // JsDisposeRuntime runs finalizers which require env, so detach afterward.
+        // Detach must come after JsDisposeRuntime since it triggers finalizers which require env.
         Napi::Detach(env);
     }
 
