@@ -35,6 +35,21 @@ describe("XMLHTTPRequest", function () {
         expect(xhr.status).to.equal(200);
     });
 
+    it("should fire 'load' before 'loadend' for a successful request", async function () {
+        const events = await new Promise<string[]>((resolve) => {
+            const xhr = new XMLHttpRequest();
+            const observed: string[] = [];
+            xhr.addEventListener("load", () => observed.push("load"));
+            xhr.addEventListener("loadend", () => {
+                observed.push("loadend");
+                resolve(observed);
+            });
+            xhr.open("GET", "app:///Assets/symlink_target.js");
+            xhr.send();
+        });
+        expect(events).to.deep.equal(["load", "loadend"]);
+    });
+
     it("should load URLs with escaped unicode characters", async function () {
         const xhr = await createRequest("GET", "https://raw.githubusercontent.com/BabylonJS/Assets/master/meshes/%CF%83%CF%84%CF%81%CE%BF%CE%B3%CE%B3%CF%85%CE%BB%CE%B5%CE%BC%CE%AD%CE%BD%CE%BF%CF%82%20%25%20%CE%BA%CF%8D%CE%B2%CE%BF%CF%82.glb");
         expect(xhr.status).to.equal(200);
@@ -104,23 +119,33 @@ describe("XMLHTTPRequest", function () {
         expect(xhr.errorDetail).to.equal("");
     });
 
-    it("should throw something when opening //", async function () {
-        function openDoubleSlash() {
+    for (const url of ["//", "noscheme.glb"]) {
+        it(`should report an unopenable URL asynchronously: ${url}`, async function () {
+            this.timeout(5000);
             const xhr = new XMLHttpRequest();
-            xhr.open("GET", "//");
-            xhr.send();
-        }
-        expect(openDoubleSlash).to.throw();
-    });
-
-    it("should throw something when opening a url with no scheme", function () {
-        function openNoProtocol() {
-            const xhr = new XMLHttpRequest();
-            xhr.open("GET", "noscheme.glb");
-            xhr.send();
-        }
-        expect(openNoProtocol).to.throw();
-    });
+            const events: string[] = [];
+            let sending = true;
+            let completedDuringSend = false;
+            await new Promise<void>((resolve) => {
+                xhr.addEventListener("load", () => events.push("load"));
+                xhr.addEventListener("error", () => events.push("error"));
+                xhr.addEventListener("loadend", () => {
+                    events.push("loadend");
+                    completedDuringSend = sending;
+                    resolve();
+                });
+                xhr.open("GET", url);
+                xhr.send();
+                sending = false;
+            });
+            expect(completedDuringSend).to.equal(false);
+            expect(events).to.deep.equal(["error", "loadend"]);
+            expect(xhr.readyState).to.equal(4);
+            expect(xhr.status).to.equal(0);
+            expect(xhr).to.have.property("errorCode", "UrlOpenFailed");
+            expect(xhr).to.have.property("errorDetail").that.is.a("string").and.is.not.empty;
+        });
+    }
 
     it("should throw something when sending before opening", function () {
         function sendWithoutOpening() {
